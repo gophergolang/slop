@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/vibeguard/vibeguard/internal/parser"
 	"github.com/vibeguard/vibeguard/internal/render"
@@ -73,7 +74,7 @@ func runGenerate(args []string) {
 		Root: *out,
 		Mode: mode,
 		Backends: []render.Backend{
-			golang.New(mod),
+			goBackend(mod),
 			sql.New(),
 			k8s.New(img, imgTag),
 			openapi.New(),
@@ -92,4 +93,20 @@ func runGenerate(args []string) {
 		}
 		fmt.Printf("\nNext: cd %s && go mod tidy && go build ./...\n", *out)
 	}
+}
+
+// goBackend builds a Go render backend, auto-detecting the vibeguard platform
+// SDK path so generated projects get a replace directive for local development.
+func goBackend(modulePath string) *golang.Backend {
+	b := golang.New(modulePath)
+	exe, err := os.Executable()
+	if err != nil {
+		return b
+	}
+	// Binary lives at <repo>/bin/vibeguard; platform is at <repo>/platform.
+	candidate := filepath.Join(filepath.Dir(filepath.Dir(exe)), "platform")
+	if _, err := os.Stat(filepath.Join(candidate, "go.mod")); err == nil {
+		b.PlatformPath = candidate
+	}
+	return b
 }

@@ -29,7 +29,8 @@ import (
 
 // Backend implements render.Backend for Go source output.
 type Backend struct {
-	ModulePath string // e.g. "github.com/example/team-task-saas"
+	ModulePath   string // e.g. "github.com/example/team-task-saas"
+	PlatformPath string // filesystem path to the platform module; when set, a replace directive is emitted
 }
 
 // New constructs a Go backend rooted at modulePath.
@@ -92,6 +93,10 @@ func (b *Backend) emitMain(app *ir.Application) (render.FileSpec, error) {
 }
 
 func (b *Backend) emitGoMod(app *ir.Application) render.FileSpec {
+	replace := ""
+	if b.PlatformPath != "" {
+		replace = "\nreplace github.com/vibeguard/platform => " + b.PlatformPath + "\n"
+	}
 	mod := fmt.Sprintf(`module %s
 
 go 1.23
@@ -102,7 +107,7 @@ require (
 	github.com/vibeguard/platform v0.0.0
 	go.uber.org/zap v1.27.0
 )
-`, b.ModulePath)
+%s`, b.ModulePath, replace)
 	return render.FileSpec{
 		Path:    "go.mod",
 		Mode:    0o644,
@@ -357,6 +362,7 @@ var funcMap = template.FuncMap{
 	"goName":            goName,
 	"goType":            goType,
 	"snake":             snake,
+	"lower":             strings.ToLower,
 	"goPkg":             goPackageName,
 	"add1":              func(i int) int { return i + 1 },
 	"hasCreate":         func(c ir.CRUD) bool { return c.Create },

@@ -207,8 +207,8 @@ func New{{goName .Entity.Name}}Repository(database db.DB) *{{goName .Entity.Name
 	return &{{goName .Entity.Name}}Repository{db: database}
 }
 
-// ErrNotFound is returned when a single-row lookup misses.
-var ErrNotFound = errors.New("not found")
+// Err{{goName .Entity.Name}}NotFound is returned when a single-row lookup misses.
+var Err{{goName .Entity.Name}}NotFound = errors.New("{{.Entity.Name | lower}}: not found")
 
 {{ if hasCreate .Entity.CRUD }}
 // Create inserts a {{.Entity.Name}}.
@@ -235,7 +235,7 @@ func (r *{{goName .Entity.Name}}Repository) Get(ctx context.Context, id string) 
 	row := r.db.QueryRow(ctx, q, id)
 	var out {{goName .Entity.Name}}
 	if err := row.Scan({{ range $i, $f := .Entity.Fields }}{{ if $i }}, {{ end }}&out.{{goName $f.Name}}{{- end }}); err != nil {
-		return nil, ErrNotFound
+		return nil, Err{{goName .Entity.Name}}NotFound
 	}
 	return &out, nil
 }
@@ -347,7 +347,7 @@ func (h *{{goName .Entity.Name}}Handler) Create(c *gin.Context) {
 // Get handles GET {{.Entity.API.BasePath}}/:id.
 func (h *{{goName .Entity.Name}}Handler) Get(c *gin.Context) {
 	out, err := h.repo.Get(c.Request.Context(), c.Param("id"))
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, Err{{goName .Entity.Name}}NotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
