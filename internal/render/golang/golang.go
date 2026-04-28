@@ -57,6 +57,10 @@ func (b *Backend) Plan(app *ir.Application) (render.FileSet, error) {
 	gomod := b.emitGoMod(app)
 	fs = append(fs, gomod)
 
+	fs = append(fs, b.emitDockerCompose(app))
+	fs = append(fs, b.emitEnvExample(app))
+	fs = append(fs, b.emitDevMakefile(app))
+
 	for _, mod := range app.Modules {
 		for _, ent := range mod.Entities {
 			files, err := b.emitEntity(app, mod, ent)
@@ -399,6 +403,94 @@ func anyNodeEndpoints(app *ir.Application) bool {
 		}
 	}
 	return false
+}
+
+func (b *Backend) emitDockerCompose(app *ir.Application) render.FileSpec {
+	name := app.Metadata.Name
+	content := fmt.Sprintf(`# Local development — starts Postgres and NATS JetStream.
+# The Go server runs on the host so you can use go run / hot-reload.
+#
+#   docker compose up -d
+#   make run
+#
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: %s
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: %s
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U %s"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2-alpine
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+
+volumes:
+  postgres_data:
+`, name, name, name)
+	return render.FileSpec{
+		Path:         "docker-compose.yml",
+		Mode:         0o644,
+		Content:      []byte(content),
+		KeepIfExists: true,
+	}
+}
+
+func (b *Backend) emitEnvExample(app *ir.Application) render.FileSpec {
+	name := app.Metadata.Name
+	content := fmt.Sprintf(`# Copy to .env and fill in values before running locally.
+# docker compose up -d starts Postgres and NATS with these defaults.
+
+DATABASE_URL=postgres://%s:secret@localhost:5432/%s?sslmode=disable
+NATS_URL=nats://localhost:4222
+PORT=8080
+GIN_MODE=debug
+`, name, name)
+	return render.FileSpec{
+		Path:         ".env.example",
+		Mode:         0o644,
+		Content:      []byte(content),
+		KeepIfExists: true,
+	}
+}
+
+func (b *Backend) emitDevMakefile(app *ir.Application) render.FileSpec {
+	content := `# Developer convenience targets.
+.PHONY: up down run migrate build
+
+up:
+	docker compose up -d
+
+down:
+	docker compose down
+
+migrate:
+	psql "$$DATABASE_URL" -f migrations/0001_init.up.sql
+
+run: up
+	@test -f .env && export $$(cat .env | xargs) || true; \
+	go run ./cmd/server/
+
+build:
+	go build -o bin/server ./cmd/server/
+`
+	return render.FileSpec{
+		Path:         "Makefile",
+		Mode:         0o644,
+		Content:      []byte(content),
+		KeepIfExists: true,
+	}
 }
 
 // ginVerb maps an HTTP method to gin's IRouter verb method name.
