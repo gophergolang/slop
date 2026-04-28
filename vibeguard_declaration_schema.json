@@ -1,0 +1,434 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vibeguard.dev/schemas/declaration-v0.1.json",
+  "title": "VibeGuard Declaration Standard v0.1",
+  "description": "Formal declarative specification for generating secure, auditable Go applications with explicit CRUD whitelisting and security controls.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "enum": ["vibeguard.dev/v1"],
+      "description": "API version of the declaration standard"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["Application"],
+      "description": "Kind of declaration"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Application name (kebab-case)"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Semantic version"
+        },
+        "description": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "compliance": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["SOC2", "GDPR", "HIPAA", "PCI-DSS", "ISO27001"]
+          }
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["modules"],
+      "properties": {
+        "modules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/Module"
+          }
+        },
+        "global": {
+          "type": "object",
+          "properties": {
+            "default_auth_required": { "type": "boolean", "default": true },
+            "default_rate_limit": { "type": "string", "default": "100/minute" },
+            "multi_tenancy": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean", "default": false },
+                "tenant_id_field": { "type": "string", "default": "tenant_id" },
+                "isolation": { "type": "string", "enum": ["row", "schema", "database"], "default": "row" }
+              }
+            }
+          }
+        },
+        "operators": {
+          "type": "object",
+          "description": "Production operators for abstraction and service discovery. Allows swapping DB, event bus, cache, etc. without code changes.",
+          "properties": {
+            "db": {
+              "type": "object",
+              "properties": {
+                "provider": { "type": "string", "enum": ["postgres", "cockroachdb", "planetscale", "tidb", "neon"], "default": "postgres" },
+                "version": { "type": "string", "default": "v1" },
+                "pool_size": { "type": "integer", "default": 20 },
+                "read_replicas": { "type": "boolean", "default": false },
+                "sharding_strategy": { "type": "string", "enum": ["none", "tenant_id", "hash"] }
+              }
+            },
+            "events": {
+              "type": "object",
+              "properties": {
+                "provider": { "type": "string", "enum": ["inmemory", "kafka", "nats", "rabbitmq", "aws_sqs"], "default": "inmemory" },
+                "version": { "type": "string", "default": "v1" },
+                "exactly_once": { "type": "boolean", "default": false },
+                "dead_letter_queue": { "type": "boolean", "default": true },
+                "retry_policy": { "type": "string", "enum": ["exponential", "fixed", "none"] }
+              }
+            },
+            "cache": {
+              "type": "object",
+              "properties": {
+                "provider": { "type": "string", "enum": ["redis", "memcached", "inmemory"], "default": "redis" },
+                "version": { "type": "string", "default": "v1" },
+                "default_ttl": { "type": "integer", "default": 300 }
+              }
+            },
+            "observability": {
+              "type": "object",
+              "properties": {
+                "tracing": { "type": "string", "enum": ["opentelemetry", "datadog", "none"], "default": "opentelemetry" },
+                "metrics": { "type": "string", "enum": ["prometheus", "datadog", "none"], "default": "prometheus" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "Module": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["identity", "business", "integration", "realtime", "ai"]
+        },
+        "description": { "type": "string" },
+        "entities": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Entity" }
+        },
+        "integrations": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Integration" }
+        },
+        "non_functional": { "$ref": "#/definitions/NonFunctional" },
+        "policies": {
+          "type": "object",
+          "properties": {
+            "row_level_security": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "entity": { "type": "string" },
+                  "condition": { "type": "string", "description": "SQL WHERE clause template using {tenant_id} or {user_id}" },
+                  "apply_to": { "type": "array", "items": { "type": "string", "enum": ["select", "update", "delete"] } }
+                }
+              }
+            }
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "trigger": { "type": "string", "enum": ["after_create", "after_update", "after_delete", "custom"] },
+              "entity": { "type": "string" },
+              "publish_to": { "type": "string", "enum": ["internal", "kafka", "rabbitmq", "webhook"] },
+              "payload": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "Entity": {
+      "type": "object",
+      "required": ["name", "table", "fields", "crud"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][a-zA-Z0-9]*$",
+          "description": "Go struct name (PascalCase)"
+        },
+        "table": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$",
+          "description": "Database table name (snake_case)"
+        },
+        "description": { "type": "string" },
+        "sensitivity": {
+          "type": "string",
+          "enum": ["public", "internal", "confidential", "restricted"],
+          "default": "internal"
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/Field" }
+        },
+        "relationships": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Relationship" }
+        },
+        "crud": {
+          "type": "object",
+          "required": ["create", "read", "list", "update", "delete"],
+          "properties": {
+            "create": { "type": "boolean" },
+            "read": { "type": "boolean" },
+            "list": { "type": "boolean" },
+            "update": {
+              "oneOf": [
+                { "type": "boolean" },
+                { "type": "array", "items": { "type": "string" } }
+              ]
+            },
+            "delete": { "type": "boolean" },
+            "soft_delete": { "type": "boolean", "default": false }
+          }
+        },
+        "api": {
+          "type": "object",
+          "properties": {
+            "base_path": { "type": "string", "pattern": "^/.*" },
+            "auth_required": { "type": "boolean", "default": true },
+            "roles_allowed": {
+              "type": "array",
+              "items": { "type": "string", "enum": ["admin", "member", "viewer", "owner"] }
+            },
+            "rate_limit": { "type": "string" },
+            "public_endpoints": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "custom_endpoints": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/CustomEndpoint" }
+            }
+          }
+        },
+        "business_rules": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "Field": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "type": {
+          "type": "string",
+          "enum": ["uuid", "string", "int", "int64", "float64", "bool", "timestamp", "json", "enum", "text", "bytea"]
+        },
+        "primary": { "type": "boolean", "default": false },
+        "unique": { "type": "boolean", "default": false },
+        "nullable": { "type": "boolean", "default": false },
+        "default": {},
+        "validate": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "db": {
+          "type": "object",
+          "properties": {
+            "index": { "type": "boolean" },
+            "unique_index": { "type": "boolean" },
+            "check": { "type": "string" }
+          }
+        }
+      }
+    },
+    "Relationship": {
+      "type": "object",
+      "required": ["to", "type"],
+      "properties": {
+        "to": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["belongs_to", "has_many", "has_one", "many_to_many"]
+        },
+        "foreign_key": { "type": "string" },
+        "on_delete": {
+          "type": "string",
+          "enum": ["cascade", "restrict", "set_null"],
+          "default": "cascade"
+        }
+      }
+    },
+    "CustomEndpoint": {
+      "type": "object",
+      "required": ["path", "method"],
+      "properties": {
+        "path": { "type": "string" },
+        "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+        "description": { "type": "string" },
+        "request": { "type": "string" },
+        "response": { "type": "string" },
+        "auth_required": { "type": "boolean", "default": true },
+        "roles_allowed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "logic": {
+          "type": "object",
+          "description": "Structured business logic steps for this endpoint. Enables declarative handler generation.",
+          "properties": {
+            "description": { "type": "string" },
+            "steps": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/LogicStep" }
+            }
+          }
+        }
+      }
+    },
+    "LogicStep": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "name": { "type": "string", "description": "Unique step name (for tracing, debugging, and compensation)" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "validate",
+            "load",
+            "authorize",
+            "external_call",
+            "update",
+            "create",
+            "delete",
+            "query",
+            "emit",
+            "consume",
+            "retry",
+            "parallel",
+            "saga",
+            "compensate",
+            "policy",
+            "cache",
+            "log",
+            "if",
+            "transaction",
+            "return",
+            "custom"
+          ],
+          "description": "Step type. Designed to be future-proof for event-driven and workflow architectures."
+        },
+        "description": { "type": "string" },
+
+        "schema": { "type": "string", "description": "Request/response schema name (for validate/return)" },
+        "entity": { "type": "string", "description": "Entity name (for load/update/create/delete)" },
+        "id_path": { "type": "string", "description": "Path param or expression for entity ID" },
+        "condition": { "type": "string", "description": "Go expression, SQL condition, or policy name" },
+
+        "service": { "type": "string", "description": "External service (openai, stripe, sendgrid, etc.)" },
+        "action": { "type": "string", "description": "Action within the service" },
+        "prompt_template": { "type": "string", "description": "Template for AI/LLM calls" },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments (supports {{.var}} templates)" },
+        "output_var": { "type": "string", "description": "Variable to store result" },
+
+        "fields": { "type": "object", "additionalProperties": true, "description": "Fields to set (supports templates)" },
+        "query": { "type": "string", "description": "SQL query (must include tenant filter for safety)" },
+
+        "event": { "type": "string", "description": "Event name (for emit/consume/saga)" },
+        "payload": { "type": "object", "additionalProperties": true, "description": "Event payload (supports templates)" },
+        "topic": { "type": "string", "description": "NATS topic / subject (for future event-driven arch)" },
+
+        "cache_key": { "type": "string", "description": "Cache key template" },
+        "ttl": { "type": "integer", "description": "TTL in seconds" },
+        "value": { "type": "string", "description": "Value to cache (for cache set)" },
+
+        "level": { "type": "string", "enum": ["debug", "info", "warn", "error"], "description": "Log level" },
+        "message": { "type": "string", "description": "Log message template" },
+
+        "attempts": { "type": "integer", "default": 3, "description": "Max retry attempts" },
+        "backoff": { "type": "string", "enum": ["exponential", "fixed", "none"], "default": "exponential" },
+
+        "then": { "type": "array", "items": { "$ref": "#/definitions/LogicStep" }, "description": "Steps for if true / saga success path" },
+        "else": { "type": "array", "items": { "$ref": "#/definitions/LogicStep" }, "description": "Steps for if false / compensation path" },
+        "steps": { "type": "array", "items": { "$ref": "#/definitions/LogicStep" }, "description": "Nested steps (transaction, parallel, saga)" },
+        "mode": { "type": "string", "enum": ["parallel", "sequential"], "default": "sequential" },
+
+        "policy": { "type": "string", "description": "Policy name to enforce (for policy step)" },
+        "status": { "type": "integer", "description": "HTTP status for return" },
+        "body": { "type": "string", "description": "Response body expression or template" }
+      }
+    },
+    "Integration": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["stripe", "openai", "sendgrid", "aws_s3", "twilio", "github", "slack"]
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "features": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "NonFunctional": {
+      "type": "object",
+      "properties": {
+        "caching": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "strategy": { "type": "string", "enum": ["write_through", "write_behind", "cache_aside"] },
+            "ttl_seconds": { "type": "integer" }
+          }
+        },
+        "observability": {
+          "type": "object",
+          "properties": {
+            "tracing": { "type": "boolean" },
+            "metrics": { "type": "boolean" },
+            "structured_logging": { "type": "boolean" }
+          }
+        },
+        "scaling": {
+          "type": "object",
+          "properties": {
+            "stateless": { "type": "boolean" },
+            "horizontal": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

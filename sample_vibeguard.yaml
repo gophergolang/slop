@@ -1,0 +1,275 @@
+apiVersion: vibeguard.dev/v1
+kind: Application
+metadata:
+  name: team-task-saas
+  version: "1.0.0"
+  description: "Collaborative team task management with AI prioritization and Stripe billing"
+  compliance: [SOC2, GDPR]
+
+spec:
+  global:
+    multi_tenancy:
+      enabled: true
+      tenant_id_field: tenant_id
+      isolation: row
+
+  modules:
+    - name: auth
+      type: identity
+      entities:
+        - name: User
+          table: users
+          sensitivity: confidential
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: email
+              type: string
+              unique: true
+              validate: [required, email]
+            - name: password_hash
+              type: string
+              validate: [required]
+            - name: full_name
+              type: string
+              validate: [required, max=100]
+            - name: role
+              type: enum
+              values: [owner, admin, member, viewer]
+              default: member
+          crud:
+            create: true
+            read: true
+            list: false
+            update: [full_name, email]
+            delete: false
+          api:
+            base_path: /auth
+            auth_required: false
+            custom_endpoints:
+              - path: /auth/register
+                method: POST
+                request: RegisterRequest
+                response: AuthResponse
+              - path: /auth/login
+                method: POST
+                request: LoginRequest
+                response: AuthResponse
+              - path: /auth/refresh
+                method: POST
+
+    - name: teams
+      type: business
+      entities:
+        - name: Team
+          table: teams
+          sensitivity: internal
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+            - name: name
+              type: string
+              validate: [required, max=100]
+            - name: owner_id
+              type: uuid
+              validate: [required]
+          relationships:
+            - to: User
+              type: belongs_to
+              foreign_key: owner_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [name]
+            delete: false
+          api:
+            base_path: /api/v1/teams
+            auth_required: true
+            roles_allowed: [owner, admin]
+
+    - name: tasks
+      type: business
+      entities:
+        - name: Task
+          table: tasks
+          sensitivity: internal
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+            - name: team_id
+              type: uuid
+              validate: [required]
+            - name: title
+              type: string
+              validate: [required, max=200]
+            - name: description
+              type: text
+              nullable: true
+            - name: status
+              type: enum
+              values: [todo, in_progress, done, archived]
+              default: todo
+            - name: priority
+              type: int
+              default: 0
+            - name: due_date
+              type: timestamp
+              nullable: true
+            - name: assignee_id
+              type: uuid
+              nullable: true
+            - name: created_by
+              type: uuid
+              validate: [required]
+          relationships:
+            - to: Team
+              type: belongs_to
+              foreign_key: team_id
+            - to: User
+              type: belongs_to
+              foreign_key: assignee_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [title, description, status, priority, due_date, assignee_id]
+            delete: false
+            soft_delete: true
+          api:
+            base_path: /api/v1/tasks
+            auth_required: true
+            roles_allowed: [owner, admin, member]
+            rate_limit: "300/minute"
+            custom_endpoints:
+              - path: /api/v1/tasks/:id/prioritize
+                method: POST
+                description: "AI-powered task prioritization using OpenAI"
+                request: PrioritizeRequest
+                response: Task
+                auth_required: true
+                logic:
+                  description: "Validate → Load → Authorize → Call OpenAI → Update priority → Emit event → Return"
+                  steps:
+                    - name: validate_input
+                      type: validate
+                      schema: PrioritizeRequest
+
+                    - name: load_task
+                      type: load
+                      entity: Task
+                      id_path: ":id"
+
+                    - name: check_permissions
+                      type: authorize
+                      roles: [admin, member]
+                      condition: "task.assignee_id == user.id OR task.created_by == user.id"
+
+                    - name: call_ai
+                      type: external_call
+                      service: openai
+                      action: chat_completion
+                      prompt_template: |
+                        You are an expert agile coach. Prioritize this task (1-10).
+                        Title: {{.task.title}}
+                        Description: {{.task.description}}
+                        Current status: {{.task.status}}
+                        Return ONLY valid JSON: {"priority": 7, "reason": "..."}
+                      output_var: ai_result
+
+                    - name: update_task
+                      type: update
+                      entity: Task
+                      fields:
+                        priority: "{{.ai_result.priority}}"
+                        status: in_progress
+
+                    - name: emit_event
+                      type: emit_event
+                      event: TaskPrioritized
+                      payload:
+                        task_id: "{{.task.id}}"
+                        new_priority: "{{.ai_result.priority}}"
+
+                    - name: return_response
+                      type: return
+                      status: 200
+                      body: "{{.task}}"
+          business_rules:
+            - "Only team members can create tasks in a team"
+            - "Task status can only be changed by assignee or admin"
+
+      integrations:
+        - name: openai
+          config:
+            api_key_env: OPENAI_API_KEY
+            model: gpt-4o-mini
+          features: [task_prioritization]
+
+      policies:
+        row_level_security:
+          - entity: Task
+            condition: "tenant_id = {tenant_id} AND (assignee_id = {user_id} OR created_by = {user_id} OR team_id IN (SELECT team_id FROM team_members WHERE user_id = {user_id}))"
+            apply_to: [select, update, delete]
+
+      events:
+        - name: TaskCreated
+          trigger: after_create
+          entity: Task
+          publish_to: internal
+        - name: TaskCompleted
+          trigger: after_update
+          entity: Task
+          condition: "old.status != 'done' AND new.status = 'done'"
+          publish_to: internal
+
+    - name: billing
+      type: integration
+      integrations:
+        - name: stripe
+          config:
+            webhook_secret_env: STRIPE_WEBHOOK_SECRET
+            publishable_key_env: STRIPE_PUBLISHABLE_KEY
+          features: [subscriptions, invoices, usage-based]
+      entities:
+        - name: Subscription
+          table: subscriptions
+          sensitivity: confidential
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+            - name: stripe_subscription_id
+              type: string
+              unique: true
+            - name: status
+              type: enum
+              values: [active, past_due, canceled, unpaid]
+            - name: current_period_end
+              type: timestamp
+          crud:
+            create: false
+            read: true
+            list: false
+            update: false
+            delete: false
+          api:
+            base_path: /api/v1/billing
+            auth_required: true
+            roles_allowed: [owner, admin]

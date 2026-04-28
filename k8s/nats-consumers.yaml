@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nats-consumers
+data:
+  consumers.yaml: |
+    # Generated from vibeguard.yaml declaration
+    # Event-driven consumers for team-task-saas
+
+    consumers:
+      - name: task-prioritized-consumer
+        subject: "tasks.prioritized"
+        queue: "task-workers"
+        durable: "task-prioritized-durable"
+        description: "Handles TaskPrioritized events from AI prioritization"
+
+      - name: task-created-consumer
+        subject: "tasks.created"
+        queue: "task-workers"
+        durable: "task-created-durable"
+        description: "Handles TaskCreated events for notifications and analytics"
+
+      - name: order-refunded-consumer
+        subject: "orders.refunded"
+        queue: "billing-workers"
+        durable: "order-refunded-durable"
+        description: "Handles refunds for billing and customer notification"
+
+    # Future: These will be managed by the App Operator
+    # The declaration defines which events each module produces/consumes

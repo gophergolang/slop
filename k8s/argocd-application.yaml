@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: team-task-saas
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/vibeguard/team-task-saas-gitops
+    targetRevision: HEAD
+    path: apps/team-task-saas/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: team-task-saas
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+---
+# This Application is generated from the vibeguard.yaml declaration
+# The App Operator (future) will manage these automatically based on the declaration
