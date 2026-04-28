@@ -1,212 +1,119 @@
-# VibeGuard
+# vibeguard
 
-**Secure, Event-Driven, Composable Applications — Generated from Declaration**
+> Declaration-driven SDK for vibe coding & infrastructure. Slop in, production out.
 
-VibeGuard turns natural language descriptions into production-ready, secure, event-driven Go applications that run on Kubernetes with NATS — while keeping humans in full control of the important parts.
+`vibeguard` is the substrate that makes LLM-assisted application development *production-grade*. You write a small, security-first YAML declaration; vibeguard parses it into a typed IR, runs it through validators that enforce the master prompt's iron rules, and emits a compilable Go service backed by a hand-written platform SDK.
 
----
+The result is a workflow where:
 
-## The Problem
+- The **declaration** is the source of truth, reviewed by humans and edited by LLMs.
+- The **platform SDK** is hand-written, versioned, and the only thing generated code calls.
+- The **operator** reconciles the declaration into actual cluster state.
+- The **MCP server** exposes the entire workflow as tools any LLM (Claude Desktop, Claude Code, Cursor, Zed) can call.
 
-Most AI code generation tools fail in production because they generate too much code that humans don't own. This leads to:
+Branch `4-7` is the foundational implementation of the four-pillar architecture (Compiler, Platform SDK, Operator, LLM Layer). See `docs/ROADMAP.md` for what's complete and what's next.
 
-- Brittle long-term maintainability
-- Painful code reviews
-- Fear of making changes
-- Infrastructure lock-in
-- Distrust from senior engineers
+## What works today (branch 4-7)
 
-**VibeGuard solves this with a fundamentally different approach.**
+| Subsystem | Status | Try it |
+|---|---|---|
+| Typed IR + YAML parser | ✅ | `vibeguard ir dump -f fixtures/sample_vibeguard.yaml` |
+| Semantic validator (9 rules) | ✅ | `vibeguard validate -f fixtures/sample_vibeguard.yaml` |
+| Multi-target generator (Go, SQL, K8s, OpenAPI) | ✅ | `vibeguard generate -f fixtures/sample_vibeguard.yaml -o /tmp/app` |
+| Master-prompt static analyzer (4 rules + SARIF) | ✅ | `vibeguard lint ./...` |
+| Real RLS enforcement in `platform/db/postgres` | ✅ | uses `pgxpool.BeforeAcquire` to bind `app.tenant_id` per checkout |
+| `platform/events/jetstream` durable adapter | ✅ | publish/subscribe via JetStream with explicit ACK |
+| `platform/llm` gateway + Anthropic driver + sealed prompts | ✅ | sha256-sealed prompts, structured-output validation, repair loop |
+| MCP server (stdio) | ✅ | `vibeguard-mcp` exposes 3 tools + 2 resources |
+| K8s operator CRD + scaffold | scaffold | types + reconciler placeholder; full reconciler in next branch |
+| Transactional outbox + drainer | scaffold | schema in `platform/events/outbox.go`; drainer in next branch |
+| Durable sagas (`workflow/pgsaga`) | scaffold | schema in `pgsaga/doc.go`; worker in next branch |
+| Observability (OTel) | scaffold | `Init` is a no-op; OTLP wiring in next branch |
+| Eval framework | not started | `eval/` lands in `4-7-eval` |
+| TS/Python generator backends | not started | IR is shape-stable; lands when there's a user |
 
----
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the four-pillar design and [`docs/ROADMAP.md`](docs/ROADMAP.md) for the next-branch sequencing.
 
-## The Architecture (3 Layers)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    DECLARATION LAYER                        │
-│  vibeguard.yaml — Human + AI contract                       │
-│  • CRUD whitelists (security-first)                         │
-│  • Logic DSL (validate → load → saga → emit → return)       │
-│  • Multi-tenancy, RLS, compliance, events                   │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│                   PLATFORM SDK (The Real Moat)              │
-│  github.com/vibeguard/platform                              │
-│  • events   — NATS-powered, tenant-aware, reliable          │
-│  • db       — Abstract, tenant-aware, RLS-enforcing         │
-│  • workflow — Saga + compensation runner                    │
-│  • policy   — Runtime security & compliance enforcement     │
-│                                                             │
-│  Hand-written • Versioned • Tested • Pluggable              │
-└─────────────────────────────────────────────────────────────┘
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│                  GENERATED THIN LAYER                       │
-│  Only the minimal code that benefits from the declaration   │
-│  • Thin handlers (HTTP + validation + SDK calls)            │
-│  • Kubernetes manifests + NATS consumers                    │
-│  • Argo CD GitOps configuration                             │
-│                                                             │
-│  Small • Readable • Human-owned • Easy to modify            │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Quick Start
+## 60-second tour
 
 ```bash
-# 1. Clone or download VibeGuard
-git clone https://github.com/vibeguard/vibeguard
-cd vibeguard
+# 1. Build
+make build
 
-# 2. Generate a full project from a declaration
-make generate
+# 2. See the typed IR for the reference declaration
+./bin/vibeguard ir dump -f fixtures/sample_vibeguard.yaml
 
-# 3. Run it locally
-cd my-generated-app
+# 3. Validate against schema + 9 semantic rules
+./bin/vibeguard validate -f fixtures/sample_vibeguard.yaml
+
+# 4. Generate a complete Go service
+./bin/vibeguard generate -f fixtures/sample_vibeguard.yaml -o /tmp/team-task-saas
+
+# 5. The generated project compiles end-to-end
+cd /tmp/team-task-saas
 go mod tidy
-go run ./cmd/server
+go build ./...     # ✓ compiles
+ls -R              # cmd/ internal/auth internal/billing internal/tasks internal/teams k8s/ migrations/ openapi.json
 
-# 4. Deploy to Kubernetes
-kubectl apply -k k8s/
+# 6. Lint the generated project (or your own) against the master prompt
+/home/alex/code/biograph/slop/bin/vibeguard lint ./...
+# 13 findings — VG006 markers warning per generated file
+
+# 7. Try the MCP server (it speaks JSON-RPC over stdio)
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | /home/alex/code/biograph/slop/bin/vibeguard-mcp
 ```
 
-Or use the CLI directly:
+For a richer guided demo: see [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
 
-```bash
-go run ./cmd/vibeguard -f my-app.yaml
+## Hooking up to Claude Desktop
+
+```jsonc
+// ~/Library/Application Support/Claude/claude_desktop_config.json
+{
+  "mcpServers": {
+    "vibeguard": {
+      "command": "/path/to/vibeguard-mcp",
+      "env": {
+        "VIBEGUARD_REPO_ROOT": "/path/to/your/vibeguard/repo"
+      }
+    }
+  }
+}
 ```
 
----
+Restart Claude Desktop. You'll see vibeguard's three tools (`validate_declaration`, `generate_project`, `lint_project`) in the tool drawer, and the master prompt + JSON schema as MCP resources.
 
-## Key Components
+## Layout
 
-### 1. Declaration DSL (v0.5)
-
-A clean, powerful, future-proofed step-based language:
-
-```yaml
-custom_endpoints:
-  - path: /api/v1/tasks/:id/prioritize
-    method: POST
-    logic:
-      steps:
-        - name: load_task
-          type: load
-          entity: Task
-        - name: call_ai
-          type: external_call
-          service: openai
-        - name: update_priority
-          type: update
-          entity: Task
-        - name: emit_event
-          type: emit
-          event: TaskPrioritized
-          topic: tasks.prioritized
 ```
-
-**Supported step types**: `validate`, `load`, `authorize`, `external_call`, `update/create/delete`, `emit`, `consume`, `retry`, `parallel`, `saga`, `compensate`, `policy`, `if`, `transaction`, and more.
-
-### 2. Platform SDK (`platform/`)
-
-The real product — hand-written, production-grade libraries:
-
-- **`events`** — NATS-powered publisher/subscriber with standard `Event` envelope
-- **`db`** — Tenant-aware Postgres client with built-in RLS
-- **`workflow`** — Saga + automatic compensation runner
-
-All generated code uses these interfaces. You can swap NATS for Kafka or Postgres for CockroachDB without changing generated code.
-
-### 3. Generator + CLI
-
-`vibeguard generate -f declaration.yaml` produces:
-
-- Thin, maintainable Go handlers
-- Full Kubernetes manifests (Deployment, NetworkPolicy, etc.)
-- NATS consumer configurations
-- Argo CD Application for GitOps
-- Production-hardened Dockerfile
-
-### 4. Kubernetes + GitOps
-
-Every generated project includes:
-
-- Production-grade Deployment (non-root, read-only FS, probes, resource limits)
-- NetworkPolicy for security isolation
-- NATS consumers derived from your declaration
-- Argo CD Application for GitOps deployment
-
----
-
-## Philosophy
-
-> Use AI aggressively where it excels (repetitive, rule-based, security-critical scaffolding) while keeping humans firmly in control of everything that determines long-term success (complex business logic, infrastructure, operational control, and code ownership).
-
-This is the only approach that produces systems real engineering organizations will trust and maintain.
-
----
-
-## Roadmap
-
-| Phase | Status | Focus |
-|-------|--------|-------|
-| 1     | ✅     | Declaration DSL + Platform SDK foundation |
-| 2     | ✅     | Kubernetes + GitOps generation |
-| 3     | ✅     | Working CLI (`vibeguard generate`) |
-| 4     | 🔜     | Real Kubernetes Operator (CRD + controller) |
-| 5     | 🔜     | Advanced workflow engine + visual editor |
-| 6     | 🔜     | Multi-cluster + self-service platform |
-
----
-
-## Example Output
-
-After running `make generate`, you get a complete project ready to deploy:
-
-```bash
-my-app/
-├── cmd/server/main.go           # Wires Platform SDK
-├── internal/tasks/
-│   └── handler.go               # Thin handler using events + db
-├── k8s/
-│   ├── deployment.yaml          # Production-hardened
-│   ├── nats-consumers.yaml      # Auto-generated from declaration
-│   └── argocd-application.yaml  # GitOps
-├── platform/                    # events + db + workflow
-└── Dockerfile
+cmd/
+  vibeguard/             # multi-subcommand CLI
+  vibeguard-mcp/         # MCP server (stdio JSON-RPC)
+internal/
+  ir/                    # typed declaration (single source of truth)
+  parser/                # YAML → IR with polymorphic field decoders
+  validate/              # 9 semantic rules
+  rules/code/            # 4 master-prompt analyzers (VG001/VG002/VG005/VG006)
+  render/                # multi-target render engine
+    golang/              # Go service emitter (handlers + repos + main)
+    sql/                 # DDL + RLS migrations
+    k8s/                 # hardened Deployment + Service + NetworkPolicy
+    openapi/             # OpenAPI 3.1 spec
+  lint/                  # multichecker harness + SARIF formatter
+  mcp/ (in cmd/)         # MCP server tool/resource implementations
+platform/                # public SDK (separate Go module)
+  db/                    # interface + postgres/ adapter (real RLS)
+  events/                # interface + jetstream/ + natscore/ adapters + outbox
+  workflow/              # interface + inmem/ + pgsaga/ adapters
+  llm/                   # gateway + drivers/anthropic + sealed prompts
+  cache/ secrets/ objectstore/ featureflag/ observability/
+operator/                # K8s operator (separate Go module — kubebuilder layout)
+fixtures/
+  sample_project/        # the canonical generated-output fixture
+  sample_vibeguard.yaml  # the reference declaration
+docs/                    # ARCHITECTURE, QUICKSTART, ROADMAP, ADRs
 ```
-
----
-
-## Why This Won't Get Laughed At
-
-- **Humans own the hard parts** (Platform SDK)
-- **Generated code stays thin** and easy to review
-- **Infrastructure is pluggable** (swap DB/event systems easily)
-- **Security is enforced at runtime** (not just at generation time)
-- **Clear evolution path** to full internal developer platform
-
----
-
-## Contributing
-
-VibeGuard is built in layers. The most valuable contributions are:
-
-1. Improving the Platform SDK (reliability, new backends)
-2. Enhancing the Declaration DSL (new step types, better ergonomics)
-3. Making the generator smarter (better thin code patterns)
-4. Building the real Kubernetes Operator
-
----
 
 ## License
 
-MIT — Use it, break it, improve it.
-
----
-
-**VibeGuard** — Secure by declaration. Reliable by design. Human-owned at the core.
+MIT — see `LICENSE`.

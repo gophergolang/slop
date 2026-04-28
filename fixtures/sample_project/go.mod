@@ -14,4 +14,4 @@ require (
 	github.com/vibeguard/platform v0.1.0
 )
 
-replace github.com/vibeguard/platform => ../platform
+replace github.com/vibeguard/platform => ../../platform
