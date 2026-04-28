@@ -94,6 +94,7 @@ func (s *server) handle(req rpcRequest) {
 			"capabilities": map[string]any{
 				"tools":     map[string]any{},
 				"resources": map[string]any{},
+				"prompts":   map[string]any{},
 			},
 			"serverInfo": map[string]any{"name": "vibeguard-mcp", "version": "0.7.0-4-7"},
 		})
@@ -105,6 +106,10 @@ func (s *server) handle(req rpcRequest) {
 		s.respond(req.ID, map[string]any{"resources": resourceDescriptors()})
 	case "resources/read":
 		s.handleResourcesRead(req)
+	case "prompts/list":
+		s.respond(req.ID, map[string]any{"prompts": promptDescriptors()})
+	case "prompts/get":
+		s.handlePromptsGet(req)
 	case "ping":
 		s.respond(req.ID, map[string]any{})
 	case "shutdown":

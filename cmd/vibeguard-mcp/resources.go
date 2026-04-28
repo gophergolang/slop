@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"os"
+
+	"github.com/vibeguard/vibeguard/internal/static"
 )
 
 type resourceDescriptor struct {
@@ -37,14 +39,9 @@ func (s *server) handleResourcesRead(req rpcRequest) {
 		s.respondError(req.ID, -32602, err.Error())
 		return
 	}
-	path, mime := pathForURI(p.URI)
-	if path == "" {
+	text, mime := contentForURI(p.URI)
+	if text == "" && mime == "" {
 		s.respondError(req.ID, -32602, "unknown resource: "+p.URI)
-		return
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		s.respondError(req.ID, -32603, err.Error())
 		return
 	}
 	s.respond(req.ID, map[string]any{
@@ -52,29 +49,33 @@ func (s *server) handleResourcesRead(req rpcRequest) {
 			{
 				"uri":      p.URI,
 				"mimeType": mime,
-				"text":     string(data),
+				"text":     text,
 			},
 		},
 	})
 }
 
-// pathForURI resolves vibeguard:// URIs to repo files. In a hosted MCP these
-// would be embedded; for local-stdio runs we read from the working repo.
-func pathForURI(uri string) (path, mime string) {
-	repo := vibeguardRepoRoot()
+// contentForURI resolves vibeguard:// URIs to their text content.
+// When VIBEGUARD_REPO_ROOT is set the file on disk takes precedence over
+// the embedded copy, so local development edits are reflected immediately.
+func contentForURI(uri string) (text, mime string) {
 	switch uri {
 	case "vibeguard://prompts/master":
-		return repo + "/vibeguard_master_prompt.md", "text/markdown"
+		return readOrEmbed("vibeguard_master_prompt.md", static.MasterPrompt), "text/markdown"
 	case "vibeguard://schema/declaration.json":
-		return repo + "/vibeguard_declaration_schema.json", "application/json"
+		return readOrEmbed("vibeguard_declaration_schema.json", static.DeclarationSchema), "application/json"
 	}
 	return "", ""
 }
 
-func vibeguardRepoRoot() string {
-	if env := os.Getenv("VIBEGUARD_REPO_ROOT"); env != "" {
-		return env
+func readOrEmbed(filename, embedded string) string {
+	repo := os.Getenv("VIBEGUARD_REPO_ROOT")
+	if repo == "" {
+		return embedded
 	}
-	wd, _ := os.Getwd()
-	return wd
+	data, err := os.ReadFile(repo + "/" + filename)
+	if err != nil {
+		return embedded
+	}
+	return string(data)
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/vibeguard/vibeguard/internal/render"
 	"github.com/vibeguard/vibeguard/internal/render/golang"
 	"github.com/vibeguard/vibeguard/internal/render/k8s"
+	"github.com/vibeguard/vibeguard/internal/render/nextjs"
 	"github.com/vibeguard/vibeguard/internal/render/openapi"
 	"github.com/vibeguard/vibeguard/internal/render/sql"
 	"github.com/vibeguard/vibeguard/internal/validate"
@@ -38,7 +39,7 @@ func toolDescriptors() []toolDescriptor {
 		},
 		{
 			Name:        "generate_project",
-			Description: "Render a complete Go service (handlers + repositories + main + migrations + K8s manifests + OpenAPI) from a declaration.",
+			Description: "Render a complete Go service (handlers + repositories + main + migrations + K8s manifests + OpenAPI spec + Next.js admin UI) from a vibeguard.yaml declaration.",
 			InputSchema: map[string]any{
 				"type":     "object",
 				"required": []string{"yaml", "out_dir"},
@@ -155,6 +156,7 @@ func (s *server) toolGenerate(id json.RawMessage, args json.RawMessage) {
 			sql.New(),
 			k8s.New("ghcr.io/example/"+app.Metadata.Name, app.Metadata.Version),
 			openapi.New(),
+			nextjs.New(),
 		},
 	}
 	report, err := engine.Run(app)
