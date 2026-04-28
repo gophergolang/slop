@@ -1,0 +1,449 @@
+apiVersion: vibeguard.dev/v1
+kind: Application
+metadata:
+  name: veterinary-surgery
+  version: "0.1.0"
+  description: "Multi-tenant veterinary surgery management app for appointments, patients, clinical notes, prescriptions, and invoices"
+  compliance: [GDPR]
+
+spec:
+  global:
+    multi_tenancy:
+      enabled: true
+      tenant_id_field: tenant_id
+      isolation: row
+
+  modules:
+    - name: auth
+      type: identity
+      entities:
+        - name: StaffUser
+          table: staff_users
+          sensitivity: confidential
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: email
+              type: string
+              unique: true
+              validate: [required, email]
+            - name: password_hash
+              type: string
+              validate: [required]
+            - name: full_name
+              type: string
+              validate: [required, max=120]
+            - name: role
+              type: enum
+              values: [practice_owner, vet, nurse, receptionist, finance]
+              default: receptionist
+            - name: active
+              type: bool
+              default: true
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [full_name, role, active]
+            delete: false
+          api:
+            base_path: /api/v1/staff
+            auth_required: true
+            roles_allowed: [practice_owner]
+
+    - name: practice
+      type: business
+      entities:
+        - name: Client
+          table: clients
+          sensitivity: confidential
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: full_name
+              type: string
+              validate: [required, max=140]
+            - name: email
+              type: string
+              validate: [required, email]
+            - name: phone
+              type: string
+              validate: [required, max=40]
+            - name: address
+              type: text
+              nullable: true
+            - name: preferred_contact
+              type: enum
+              values: [email, phone, sms]
+              default: email
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [full_name, email, phone, address, preferred_contact]
+            delete: false
+          api:
+            base_path: /api/v1/clients
+            auth_required: true
+            roles_allowed: [practice_owner, vet, nurse, receptionist]
+            rate_limit: "300/minute"
+
+        - name: Pet
+          table: pets
+          sensitivity: confidential
+          parents: [Client]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: client_id
+              type: uuid
+              validate: [required]
+            - name: name
+              type: string
+              validate: [required, max=100]
+            - name: species
+              type: enum
+              values: [dog, cat, rabbit, bird, reptile, horse, other]
+            - name: breed
+              type: string
+              nullable: true
+            - name: date_of_birth
+              type: timestamp
+              nullable: true
+            - name: sex
+              type: enum
+              values: [male, female, unknown]
+              default: unknown
+            - name: neutered
+              type: bool
+              default: false
+            - name: microchip_number
+              type: string
+              nullable: true
+              unique: true
+            - name: status
+              type: enum
+              values: [active, deceased, archived]
+              default: active
+          relationships:
+            - to: Client
+              type: belongs_to
+              foreign_key: client_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [name, species, breed, date_of_birth, sex, neutered, microchip_number, status]
+            delete: false
+            soft_delete: true
+          api:
+            base_path: /api/v1/pets
+            auth_required: true
+            roles_allowed: [practice_owner, vet, nurse, receptionist]
+
+        - name: Appointment
+          table: appointments
+          sensitivity: confidential
+          parents: [Pet]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: pet_id
+              type: uuid
+              validate: [required]
+            - name: client_id
+              type: uuid
+              validate: [required]
+            - name: assigned_staff_id
+              type: uuid
+              nullable: true
+            - name: starts_at
+              type: timestamp
+              validate: [required]
+            - name: duration_minutes
+              type: int
+              default: 30
+            - name: reason
+              type: string
+              validate: [required, max=200]
+            - name: status
+              type: enum
+              values: [scheduled, checked_in, in_consult, completed, cancelled, no_show]
+              default: scheduled
+            - name: triage_level
+              type: enum
+              values: [routine, urgent, emergency]
+              default: routine
+          relationships:
+            - to: Pet
+              type: belongs_to
+              foreign_key: pet_id
+            - to: Client
+              type: belongs_to
+              foreign_key: client_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: assigned_staff_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [assigned_staff_id, starts_at, duration_minutes, reason, status, triage_level]
+            delete: false
+            soft_delete: true
+          api:
+            base_path: /api/v1/appointments
+            auth_required: true
+            roles_allowed: [practice_owner, vet, nurse, receptionist]
+            rate_limit: "600/minute"
+            custom_endpoints:
+              - path: /api/v1/appointments/:id/check-in
+                method: POST
+                description: "Mark an appointment as checked in and emit an operational event"
+                node: practice.CheckInAppointment
+                request: CheckInAppointmentRequest
+                response: AppointmentResponse
+                auth_required: true
+                roles_allowed: [practice_owner, vet, nurse, receptionist]
+
+        - name: ClinicalNote
+          table: clinical_notes
+          sensitivity: restricted
+          parents: [Pet]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: pet_id
+              type: uuid
+              validate: [required]
+            - name: appointment_id
+              type: uuid
+              nullable: true
+            - name: author_staff_id
+              type: uuid
+              validate: [required]
+            - name: presenting_complaint
+              type: text
+              validate: [required]
+            - name: examination
+              type: text
+              nullable: true
+            - name: diagnosis
+              type: text
+              nullable: true
+            - name: treatment_plan
+              type: text
+              nullable: true
+            - name: follow_up_required
+              type: bool
+              default: false
+            - name: locked_at
+              type: timestamp
+              nullable: true
+          relationships:
+            - to: Pet
+              type: belongs_to
+              foreign_key: pet_id
+            - to: Appointment
+              type: belongs_to
+              foreign_key: appointment_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: author_staff_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [presenting_complaint, examination, diagnosis, treatment_plan, follow_up_required, locked_at]
+            delete: false
+          api:
+            base_path: /api/v1/clinical-notes
+            auth_required: true
+            roles_allowed: [practice_owner, vet, nurse]
+
+        - name: Prescription
+          table: prescriptions
+          sensitivity: restricted
+          parents: [Pet]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: pet_id
+              type: uuid
+              validate: [required]
+            - name: clinical_note_id
+              type: uuid
+              nullable: true
+            - name: prescribed_by_staff_id
+              type: uuid
+              validate: [required]
+            - name: medication_name
+              type: string
+              validate: [required, max=160]
+            - name: dosage
+              type: string
+              validate: [required, max=120]
+            - name: instructions
+              type: text
+              validate: [required]
+            - name: status
+              type: enum
+              values: [draft, issued, dispensed, cancelled]
+              default: draft
+          relationships:
+            - to: Pet
+              type: belongs_to
+              foreign_key: pet_id
+            - to: ClinicalNote
+              type: belongs_to
+              foreign_key: clinical_note_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: prescribed_by_staff_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [medication_name, dosage, instructions, status]
+            delete: false
+          api:
+            base_path: /api/v1/prescriptions
+            auth_required: true
+            roles_allowed: [practice_owner, vet]
+
+      policies:
+        row_level_security:
+          - entity: Client
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: Pet
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: Appointment
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: ClinicalNote
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: Prescription
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+
+      events:
+        - name: AppointmentBooked
+          trigger: after_create
+          entity: Appointment
+          publish_to: internal
+        - name: AppointmentCheckedIn
+          trigger: after_update
+          entity: Appointment
+          condition: "old.status != 'checked_in' AND new.status = 'checked_in'"
+          publish_to: internal
+        - name: ClinicalNoteLocked
+          trigger: after_update
+          entity: ClinicalNote
+          condition: "old.locked_at IS NULL AND new.locked_at IS NOT NULL"
+          publish_to: audit
+        - name: PrescriptionIssued
+          trigger: after_update
+          entity: Prescription
+          condition: "old.status != 'issued' AND new.status = 'issued'"
+          publish_to: audit
+
+    - name: billing
+      type: business
+      entities:
+        - name: Invoice
+          table: invoices
+          sensitivity: confidential
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: client_id
+              type: uuid
+              validate: [required]
+            - name: appointment_id
+              type: uuid
+              nullable: true
+            - name: status
+              type: enum
+              values: [draft, issued, paid, void]
+              default: draft
+            - name: total_pence
+              type: int
+              default: 0
+            - name: due_at
+              type: timestamp
+              nullable: true
+          relationships:
+            - to: Client
+              type: belongs_to
+              foreign_key: client_id
+            - to: Appointment
+              type: belongs_to
+              foreign_key: appointment_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [status, total_pence, due_at]
+            delete: false
+          api:
+            base_path: /api/v1/invoices
+            auth_required: true
+            roles_allowed: [practice_owner, receptionist, finance]
+
+      policies:
+        row_level_security:
+          - entity: Invoice
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+
+      events:
+        - name: InvoiceIssued
+          trigger: after_update
+          entity: Invoice
+          condition: "old.status != 'issued' AND new.status = 'issued'"
+          publish_to: internal

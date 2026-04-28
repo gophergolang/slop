@@ -1,0 +1,809 @@
+apiVersion: vibeguard.dev/v1
+kind: Application
+metadata:
+  name: advanced-prison-management
+  version: "0.1.0"
+  description: "High-security prison management system for custody, housing, movements, incidents, healthcare, visits, programs, and parole workflows"
+  compliance: [SOC2, GDPR]
+
+spec:
+  global:
+    multi_tenancy:
+      enabled: true
+      tenant_id_field: tenant_id
+      isolation: row
+
+  modules:
+    - name: auth
+      type: identity
+      entities:
+        - name: StaffUser
+          table: staff_users
+          sensitivity: confidential
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: email
+              type: string
+              unique: true
+              validate: [required, email]
+            - name: password_hash
+              type: string
+              validate: [required]
+            - name: full_name
+              type: string
+              validate: [required, max=140]
+            - name: badge_number
+              type: string
+              unique: true
+              validate: [required, max=40]
+            - name: role
+              type: enum
+              values: [warden, deputy_warden, custody_officer, intelligence_officer, healthcare_staff, programs_officer, case_manager, visits_officer, auditor]
+              default: custody_officer
+            - name: active
+              type: bool
+              default: true
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [full_name, badge_number, role, active]
+            delete: false
+          api:
+            base_path: /api/v1/staff
+            auth_required: true
+            roles_allowed: [warden, deputy_warden]
+
+    - name: custody
+      type: business
+      entities:
+        - name: Facility
+          table: facilities
+          sensitivity: internal
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: name
+              type: string
+              validate: [required, max=160]
+            - name: security_level
+              type: enum
+              values: [minimum, medium, close, maximum, supermax]
+              default: medium
+            - name: operational_status
+              type: enum
+              values: [active, lockdown, partial_lockdown, maintenance, closed]
+              default: active
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [name, security_level, operational_status]
+            delete: false
+          api:
+            base_path: /api/v1/facilities
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, auditor]
+
+        - name: HousingUnit
+          table: housing_units
+          sensitivity: internal
+          parents: [Facility]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: facility_id
+              type: uuid
+              validate: [required]
+            - name: name
+              type: string
+              validate: [required, max=120]
+            - name: unit_type
+              type: enum
+              values: [general_population, segregation, medical, intake, protective_custody, high_security]
+              default: general_population
+            - name: capacity
+              type: int
+              default: 0
+            - name: status
+              type: enum
+              values: [open, locked_down, offline]
+              default: open
+          relationships:
+            - to: Facility
+              type: belongs_to
+              foreign_key: facility_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [name, unit_type, capacity, status]
+            delete: false
+          api:
+            base_path: /api/v1/housing-units
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, custody_officer, auditor]
+
+        - name: Inmate
+          table: inmates
+          sensitivity: restricted
+          parents: [Facility]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: facility_id
+              type: uuid
+              validate: [required]
+            - name: current_housing_unit_id
+              type: uuid
+              nullable: true
+            - name: prison_number
+              type: string
+              unique: true
+              validate: [required, max=50]
+            - name: legal_name
+              type: string
+              validate: [required, max=180]
+            - name: date_of_birth
+              type: timestamp
+              validate: [required]
+            - name: custody_status
+              type: enum
+              values: [intake, remand, sentenced, transferred, released, deceased]
+              default: intake
+            - name: security_classification
+              type: enum
+              values: [minimum, medium, close, maximum, supermax]
+              default: medium
+            - name: sentence_start_at
+              type: timestamp
+              nullable: true
+            - name: projected_release_at
+              type: timestamp
+              nullable: true
+            - name: risk_flags
+              type: json
+              nullable: true
+          relationships:
+            - to: Facility
+              type: belongs_to
+              foreign_key: facility_id
+            - to: HousingUnit
+              type: belongs_to
+              foreign_key: current_housing_unit_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [current_housing_unit_id, custody_status, security_classification, projected_release_at, risk_flags]
+            delete: false
+          api:
+            base_path: /api/v1/inmates
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, custody_officer, intelligence_officer, healthcare_staff, case_manager, auditor]
+            rate_limit: "600/minute"
+            custom_endpoints:
+              - path: /api/v1/inmates/:id/reclassify
+                method: POST
+                description: "Reclassify an inmate after a reviewed risk assessment"
+                node: custody.ReclassifyInmate
+                request: ReclassifyInmateRequest
+                response: InmateResponse
+                auth_required: true
+                roles_allowed: [warden, deputy_warden, intelligence_officer]
+
+        - name: Movement
+          table: movements
+          sensitivity: restricted
+          parents: [Inmate]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: inmate_id
+              type: uuid
+              validate: [required]
+            - name: from_location
+              type: string
+              validate: [required, max=160]
+            - name: to_location
+              type: string
+              validate: [required, max=160]
+            - name: reason
+              type: enum
+              values: [court, medical, visit, work_detail, program, housing_transfer, emergency, release]
+            - name: status
+              type: enum
+              values: [requested, approved, in_progress, completed, cancelled]
+              default: requested
+            - name: escort_staff_id
+              type: uuid
+              nullable: true
+            - name: scheduled_at
+              type: timestamp
+              validate: [required]
+            - name: completed_at
+              type: timestamp
+              nullable: true
+          relationships:
+            - to: Inmate
+              type: belongs_to
+              foreign_key: inmate_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: escort_staff_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [to_location, reason, status, escort_staff_id, scheduled_at, completed_at]
+            delete: false
+          api:
+            base_path: /api/v1/movements
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, custody_officer]
+            custom_endpoints:
+              - path: /api/v1/movements/:id/approve
+                method: POST
+                description: "Approve an inmate movement and emit a custody event"
+                node: custody.ApproveMovement
+                request: ApproveMovementRequest
+                response: MovementResponse
+                auth_required: true
+                roles_allowed: [warden, deputy_warden, custody_officer]
+
+      policies:
+        row_level_security:
+          - entity: Facility
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: HousingUnit
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: Inmate
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: Movement
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+
+      events:
+        - name: InmateAdmitted
+          trigger: after_create
+          entity: Inmate
+          publish_to: audit
+        - name: InmateReclassified
+          trigger: after_update
+          entity: Inmate
+          condition: "old.security_classification != new.security_classification"
+          publish_to: audit
+        - name: MovementApproved
+          trigger: after_update
+          entity: Movement
+          condition: "old.status != 'approved' AND new.status = 'approved'"
+          publish_to: internal
+        - name: MovementCompleted
+          trigger: after_update
+          entity: Movement
+          condition: "old.status != 'completed' AND new.status = 'completed'"
+          publish_to: internal
+
+    - name: safety
+      type: business
+      entities:
+        - name: IncidentReport
+          table: incident_reports
+          sensitivity: restricted
+          parents: [Facility]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: facility_id
+              type: uuid
+              validate: [required]
+            - name: reported_by_staff_id
+              type: uuid
+              validate: [required]
+            - name: inmate_id
+              type: uuid
+              nullable: true
+            - name: occurred_at
+              type: timestamp
+              validate: [required]
+            - name: incident_type
+              type: enum
+              values: [contraband, assault, self_harm, medical_emergency, escape_attempt, use_of_force, property_damage, intelligence]
+            - name: severity
+              type: enum
+              values: [low, medium, high, critical]
+              default: medium
+            - name: narrative
+              type: text
+              validate: [required]
+            - name: status
+              type: enum
+              values: [draft, submitted, under_review, closed]
+              default: draft
+          relationships:
+            - to: Facility
+              type: belongs_to
+              foreign_key: facility_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: reported_by_staff_id
+            - to: Inmate
+              type: belongs_to
+              foreign_key: inmate_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [incident_type, severity, narrative, status]
+            delete: false
+          api:
+            base_path: /api/v1/incidents
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, custody_officer, intelligence_officer, healthcare_staff, auditor]
+            custom_endpoints:
+              - path: /api/v1/incidents/:id/submit
+                method: POST
+                description: "Submit an incident report for supervisory review"
+                node: safety.SubmitIncident
+                request: SubmitIncidentRequest
+                response: IncidentReportResponse
+                auth_required: true
+                roles_allowed: [warden, deputy_warden, custody_officer, intelligence_officer, healthcare_staff]
+
+        - name: ContrabandEvidence
+          table: contraband_evidence
+          sensitivity: restricted
+          parents: [IncidentReport]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: incident_report_id
+              type: uuid
+              validate: [required]
+            - name: evidence_reference
+              type: string
+              unique: true
+              validate: [required, max=80]
+            - name: description
+              type: text
+              validate: [required]
+            - name: storage_location
+              type: string
+              validate: [required, max=160]
+            - name: chain_of_custody
+              type: json
+              nullable: true
+            - name: status
+              type: enum
+              values: [logged, sealed, transferred, disposed]
+              default: logged
+          relationships:
+            - to: IncidentReport
+              type: belongs_to
+              foreign_key: incident_report_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [description, storage_location, chain_of_custody, status]
+            delete: false
+          api:
+            base_path: /api/v1/evidence
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, intelligence_officer, auditor]
+
+      policies:
+        row_level_security:
+          - entity: IncidentReport
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: ContrabandEvidence
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+
+      events:
+        - name: IncidentSubmitted
+          trigger: after_update
+          entity: IncidentReport
+          condition: "old.status != 'submitted' AND new.status = 'submitted'"
+          publish_to: audit
+        - name: EvidenceTransferred
+          trigger: after_update
+          entity: ContrabandEvidence
+          condition: "old.status != 'transferred' AND new.status = 'transferred'"
+          publish_to: audit
+
+    - name: rehabilitation
+      type: business
+      entities:
+        - name: Program
+          table: programs
+          sensitivity: internal
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: name
+              type: string
+              validate: [required, max=160]
+            - name: program_type
+              type: enum
+              values: [education, vocational, therapy, substance_misuse, faith, reentry]
+            - name: capacity
+              type: int
+              default: 0
+            - name: active
+              type: bool
+              default: true
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [name, program_type, capacity, active]
+            delete: false
+          api:
+            base_path: /api/v1/programs
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, programs_officer, case_manager]
+
+        - name: ProgramEnrollment
+          table: program_enrollments
+          sensitivity: confidential
+          parents: [Inmate]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: inmate_id
+              type: uuid
+              validate: [required]
+            - name: program_id
+              type: uuid
+              validate: [required]
+            - name: assigned_by_staff_id
+              type: uuid
+              validate: [required]
+            - name: status
+              type: enum
+              values: [referred, enrolled, completed, withdrawn, removed]
+              default: referred
+            - name: progress_notes
+              type: text
+              nullable: true
+          relationships:
+            - to: Inmate
+              type: belongs_to
+              foreign_key: inmate_id
+            - to: Program
+              type: belongs_to
+              foreign_key: program_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: assigned_by_staff_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [status, progress_notes]
+            delete: false
+          api:
+            base_path: /api/v1/program-enrollments
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, programs_officer, case_manager]
+
+        - name: ParoleReview
+          table: parole_reviews
+          sensitivity: restricted
+          parents: [Inmate]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: inmate_id
+              type: uuid
+              validate: [required]
+            - name: case_manager_staff_id
+              type: uuid
+              validate: [required]
+            - name: scheduled_at
+              type: timestamp
+              validate: [required]
+            - name: recommendation
+              type: enum
+              values: [pending, support, oppose, defer]
+              default: pending
+            - name: rationale
+              type: text
+              nullable: true
+            - name: status
+              type: enum
+              values: [draft, submitted, reviewed, archived]
+              default: draft
+          relationships:
+            - to: Inmate
+              type: belongs_to
+              foreign_key: inmate_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: case_manager_staff_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [scheduled_at, recommendation, rationale, status]
+            delete: false
+          api:
+            base_path: /api/v1/parole-reviews
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, case_manager, auditor]
+
+      policies:
+        row_level_security:
+          - entity: Program
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: ProgramEnrollment
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: ParoleReview
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+
+      events:
+        - name: ProgramEnrollmentCompleted
+          trigger: after_update
+          entity: ProgramEnrollment
+          condition: "old.status != 'completed' AND new.status = 'completed'"
+          publish_to: internal
+        - name: ParoleReviewSubmitted
+          trigger: after_update
+          entity: ParoleReview
+          condition: "old.status != 'submitted' AND new.status = 'submitted'"
+          publish_to: audit
+
+    - name: visits
+      type: business
+      entities:
+        - name: Visitor
+          table: visitors
+          sensitivity: confidential
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: legal_name
+              type: string
+              validate: [required, max=180]
+            - name: date_of_birth
+              type: timestamp
+              validate: [required]
+            - name: phone
+              type: string
+              nullable: true
+            - name: email
+              type: string
+              nullable: true
+            - name: approval_status
+              type: enum
+              values: [pending, approved, denied, suspended]
+              default: pending
+            - name: risk_notes
+              type: text
+              nullable: true
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [phone, email, approval_status, risk_notes]
+            delete: false
+          api:
+            base_path: /api/v1/visitors
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, visits_officer, intelligence_officer, auditor]
+
+        - name: Visit
+          table: visits
+          sensitivity: confidential
+          parents: [Inmate]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: inmate_id
+              type: uuid
+              validate: [required]
+            - name: visitor_id
+              type: uuid
+              validate: [required]
+            - name: scheduled_at
+              type: timestamp
+              validate: [required]
+            - name: visit_type
+              type: enum
+              values: [in_person, legal, video, professional]
+              default: in_person
+            - name: status
+              type: enum
+              values: [requested, approved, checked_in, completed, denied, cancelled]
+              default: requested
+            - name: supervised
+              type: bool
+              default: true
+          relationships:
+            - to: Inmate
+              type: belongs_to
+              foreign_key: inmate_id
+            - to: Visitor
+              type: belongs_to
+              foreign_key: visitor_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [scheduled_at, visit_type, status, supervised]
+            delete: false
+          api:
+            base_path: /api/v1/visits
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, visits_officer, intelligence_officer]
+            custom_endpoints:
+              - path: /api/v1/visits/:id/approve
+                method: POST
+                description: "Approve a visit after visitor and inmate restrictions are checked"
+                node: visits.ApproveVisit
+                request: ApproveVisitRequest
+                response: VisitResponse
+                auth_required: true
+                roles_allowed: [warden, deputy_warden, visits_officer, intelligence_officer]
+
+      policies:
+        row_level_security:
+          - entity: Visitor
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+          - entity: Visit
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+
+      events:
+        - name: VisitApproved
+          trigger: after_update
+          entity: Visit
+          condition: "old.status != 'approved' AND new.status = 'approved'"
+          publish_to: audit
+
+    - name: healthcare
+      type: business
+      entities:
+        - name: MedicalRecord
+          table: medical_records
+          sensitivity: restricted
+          parents: [Inmate]
+          fields:
+            - name: id
+              type: uuid
+              primary: true
+            - name: tenant_id
+              type: uuid
+              validate: [required]
+              db:
+                index: true
+            - name: inmate_id
+              type: uuid
+              validate: [required]
+            - name: recorded_by_staff_id
+              type: uuid
+              validate: [required]
+            - name: record_type
+              type: enum
+              values: [intake_screening, medication, chronic_care, mental_health, emergency, transfer_summary]
+            - name: summary
+              type: text
+              validate: [required]
+            - name: restricted_access
+              type: bool
+              default: true
+            - name: locked_at
+              type: timestamp
+              nullable: true
+          relationships:
+            - to: Inmate
+              type: belongs_to
+              foreign_key: inmate_id
+            - to: StaffUser
+              type: belongs_to
+              foreign_key: recorded_by_staff_id
+          crud:
+            create: true
+            read: true
+            list: true
+            update: [record_type, summary, restricted_access, locked_at]
+            delete: false
+          api:
+            base_path: /api/v1/medical-records
+            auth_required: true
+            roles_allowed: [warden, deputy_warden, healthcare_staff, auditor]
+
+      policies:
+        row_level_security:
+          - entity: MedicalRecord
+            condition: "tenant_id = {tenant_id}"
+            apply_to: [select, insert, update, delete]
+
+      events:
+        - name: MedicalRecordLocked
+          trigger: after_update
+          entity: MedicalRecord
+          condition: "old.locked_at IS NULL AND new.locked_at IS NOT NULL"
+          publish_to: audit
