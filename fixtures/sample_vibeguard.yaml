@@ -104,6 +104,7 @@ spec:
         - name: Task
           table: tasks
           sensitivity: internal
+          parents: [Team]
           fields:
             - name: id
               type: uuid
@@ -159,9 +160,11 @@ spec:
               - path: /api/v1/tasks/:id/prioritize
                 method: POST
                 description: "AI-powered task prioritization using OpenAI"
+                node: tasks.Prioritize
                 request: PrioritizeRequest
-                response: Task
+                response: PrioritizeResponse
                 auth_required: true
+                roles_allowed: [owner, admin, member]
                 logic:
                   description: "Validate → Load → Authorize → Call OpenAI → Update priority → Emit event → Return"
                   steps:

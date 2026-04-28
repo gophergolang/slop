@@ -47,6 +47,45 @@ func TestEngineWritesFiles(t *testing.T) {
 	}
 }
 
+func TestEngineKeepIfExistsSkipsExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "stub.go")
+	if err := os.WriteFile(existing, []byte("// developer wrote this\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	engine := &Engine{
+		Root: dir,
+		Mode: ModeWrite,
+		Backends: []Backend{
+			fakeBackend{files: FileSet{
+				{Path: "stub.go", Content: []byte("// generator stub\n"), KeepIfExists: true},
+				{Path: "wrapper.go", Content: []byte("// wrapper\n")},
+			}},
+		},
+	}
+	report, err := engine.Run(&ir.Application{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "// developer wrote this\n" {
+		t.Errorf("stub overwritten: %q", got)
+	}
+	if len(report.Skipped) != 1 || report.Skipped[0] != "stub.go" {
+		t.Errorf("Skipped: got %v want [stub.go]", report.Skipped)
+	}
+	wrapped, err := os.ReadFile(filepath.Join(dir, "wrapper.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(wrapped) != "// wrapper\n" {
+		t.Errorf("wrapper not written: %q", wrapped)
+	}
+}
+
 func TestEngineDryRunDoesNotWrite(t *testing.T) {
 	dir := t.TempDir()
 	var buf bytes.Buffer

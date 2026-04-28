@@ -74,6 +74,11 @@ const (
 
 // Entity is one persistent type. The PrimaryKey pointer is resolved
 // post-parse and points into the Fields slice.
+//
+// Parents express the leap-style tree-of-data: an entity may declare zero or
+// more parents by entity name. The post-parse resolver fills ParentRefs.
+// Generated URL paths, foreign-key constraints, cascade rules, and frontend
+// navigation derive from this tree.
 type Entity struct {
 	Name          string
 	Table         string
@@ -81,6 +86,8 @@ type Entity struct {
 	Fields        []*Field
 	PrimaryKey    *Field
 	Relationships []Relationship
+	Parents       []string  // declared parent entity names
+	ParentRefs    []*Entity // resolved post-parse
 	CRUD          CRUD
 	API           API
 	Module        *Module // back-pointer set during parse
@@ -152,7 +159,10 @@ type API struct {
 	CustomEndpoints []CustomEndpoint
 }
 
-// CustomEndpoint is a non-CRUD route declared with a structured logic block.
+// CustomEndpoint is a non-CRUD route declared either with a structured logic
+// block (the step DSL) or with a Node reference (a developer-authored Go
+// function the generator wraps with secure boilerplate). When Node is set it
+// takes precedence; Logic remains supported for purely declarative endpoints.
 type CustomEndpoint struct {
 	Path         string
 	Method       string
@@ -160,6 +170,8 @@ type CustomEndpoint struct {
 	Request      string
 	Response     string
 	AuthRequired bool
+	RolesAllowed []string
+	Node         string // "<package>.<Func>" — handed to the Go backend's node renderer
 	Logic        Logic
 }
 

@@ -198,6 +198,11 @@
           "type": "array",
           "items": { "$ref": "#/definitions/Relationship" }
         },
+        "parents": {
+          "type": "array",
+          "description": "Parent entity names. Forms a tree (DAG) of data so URL paths, foreign keys, and frontend navigation are derived from one declaration.",
+          "items": { "type": "string", "pattern": "^[A-Z][a-zA-Z0-9]*$" }
+        },
         "crud": {
           "type": "object",
           "required": ["create", "read", "list", "update", "delete"],
@@ -298,6 +303,10 @@
         "roles_allowed": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "node": {
+          "type": "string",
+          "description": "Reference to a developer-authored Go function (e.g. \"tasks.Prioritize\"). When set, the generator emits the secure wrapper (parse, validate, auth, tenant, tx, observability) and dispatches to this function. Mutually preferred over `logic.steps`."
         },
         "logic": {
           "type": "object",

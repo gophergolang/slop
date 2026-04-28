@@ -30,6 +30,45 @@ This turns "vibe coding" into **declarative secure engineering**.
 - **Auditable** — The YAML can be diffed, reviewed in PRs, and used to generate OpenAPI + docs automatically.
 - **Extensible** — Supports custom business logic endpoints, integrations, and non-functional requirements.
 
+### Tree-of-data: `parents`
+
+An entity may declare zero or more `parents` (entity names). The parent graph is a DAG (typically a tree) and drives:
+
+- **Nested URL paths** — `/api/v1/teams/:team_id/tasks/:id` is derived when `Task.parents: [Team]` and `api.base_path` is unset. An explicit `api.base_path` always overrides the derived path.
+- **Foreign keys** — the SQL backend emits `FOREIGN KEY (<parent_table_singular>_id) REFERENCES <parent_table>(id) ON DELETE CASCADE` for each parent edge whose conventional FK column is present on the child.
+- **Tenant boundaries** — a tenant-bound child cannot have a non-tenant-bound parent (`VG-VAL-012`). Cycles (`VG-VAL-011`) and missing parents (`VG-VAL-010`) are rejected before code generation.
+- **Frontend navigation** — the Next.js generator (planned) walks the tree to produce nested admin routes and breadcrumbs.
+
+Example:
+
+```yaml
+- name: Comment
+  table: comments
+  parents: [Task]
+  fields:
+    - { name: id, type: uuid, primary: true }
+    - { name: tenant_id, type: uuid }
+    - { name: task_id, type: uuid }
+    - { name: body, type: text }
+```
+
+### Business-logic nodes (`node:`)
+
+Custom endpoints can dispatch to a developer-authored Go function instead of a YAML step DSL. Set `node: <pkg>.<Func>` on a `custom_endpoint`. The generator emits the secure wrapper (parse, validate, auth, tenant context, transaction, observability span) and calls the named function at the one point where business logic actually lives. The developer fills in the function body; the framework owns everything around it.
+
+```yaml
+custom_endpoints:
+  - path: /api/v1/tasks/:id/prioritize
+    method: POST
+    node: tasks.Prioritize
+    request: PrioritizeRequest
+    response: PrioritizeResponse
+    auth_required: true
+    roles_allowed: [owner, admin, member]
+```
+
+When both `node:` and `logic.steps:` are set, `node:` wins. The step DSL remains supported for purely declarative endpoints.
+
 ---
 
 ## Roadmap & Production Architecture Vision (Strategic Direction)

@@ -49,6 +49,7 @@ type rawEntity struct {
 	Sensitivity   string            `yaml:"sensitivity"`
 	Fields        []rawField        `yaml:"fields"`
 	Relationships []rawRelationship `yaml:"relationships"`
+	Parents       []string          `yaml:"parents"`
 	CRUD          rawCRUD           `yaml:"crud"`
 	API           rawAPI            `yaml:"api"`
 	BusinessRules []string          `yaml:"business_rules"`
@@ -131,6 +132,8 @@ type rawCustomEndpoint struct {
 	Request      string   `yaml:"request"`
 	Response     string   `yaml:"response"`
 	AuthRequired bool     `yaml:"auth_required"`
+	RolesAllowed []string `yaml:"roles_allowed"`
+	Node         string   `yaml:"node"`
 	Logic        rawLogic `yaml:"logic"`
 }
 

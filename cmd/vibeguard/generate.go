@@ -9,6 +9,7 @@ import (
 	"github.com/vibeguard/vibeguard/internal/render"
 	"github.com/vibeguard/vibeguard/internal/render/golang"
 	"github.com/vibeguard/vibeguard/internal/render/k8s"
+	"github.com/vibeguard/vibeguard/internal/render/nextjs"
 	"github.com/vibeguard/vibeguard/internal/render/openapi"
 	"github.com/vibeguard/vibeguard/internal/render/sql"
 	"github.com/vibeguard/vibeguard/internal/validate"
@@ -76,6 +77,7 @@ func runGenerate(args []string) {
 			sql.New(),
 			k8s.New(img, imgTag),
 			openapi.New(),
+			nextjs.New(),
 		},
 	}
 	report, err := engine.Run(app)

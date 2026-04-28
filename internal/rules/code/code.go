@@ -17,5 +17,6 @@ func AllAnalyzers() []*analysis.Analyzer {
 		VG002UnhandledCriticalError,
 		VG005ContextBackgroundInRequest,
 		VG006EditedGeneratedCode,
+		VG009NodePlatformImports,
 	}
 }

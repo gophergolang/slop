@@ -48,10 +48,11 @@ func pathsFor(app *ir.Application) map[string]any {
 	out := map[string]any{}
 	for _, mod := range app.Modules {
 		for _, ent := range mod.Entities {
-			base := ent.API.BasePath
+			base := ir.EffectiveBasePath(ent)
 			if base == "" {
 				continue
 			}
+			base = openapiPath(base)
 			collection := map[string]any{}
 			if ent.CRUD.List {
 				collection["get"] = op(ent, "list", "200", "List "+ent.Name)
@@ -78,6 +79,17 @@ func pathsFor(app *ir.Application) map[string]any {
 		}
 	}
 	return out
+}
+
+// openapiPath converts a gin-style path (":foo") to an OpenAPI path ("{foo}").
+func openapiPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, seg := range parts {
+		if strings.HasPrefix(seg, ":") {
+			parts[i] = "{" + seg[1:] + "}"
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 func op(ent *ir.Entity, kind, status, summary string) map[string]any {

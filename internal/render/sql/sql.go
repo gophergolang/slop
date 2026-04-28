@@ -43,6 +43,7 @@ func (Backend) Plan(app *ir.Application) (render.FileSet, error) {
 			emitRLS(&up, p, findEntityTable(app, p.Entity))
 		}
 	}
+	emitParentFKs(&up, app)
 
 	return render.FileSet{
 		{
@@ -93,6 +94,58 @@ func emitTable(up, down *strings.Builder, ent *ir.Entity) {
 	up.WriteString("\n")
 
 	fmt.Fprintf(down, "DROP TABLE IF EXISTS %s;\n", ent.Table)
+}
+
+// emitParentFKs adds a FOREIGN KEY ... ON DELETE CASCADE for each parent
+// edge. The expected FK column is "<parent_table_singular>_id"; if no such
+// column exists on the child it is skipped silently (declarations may pre-
+// declare relationships with a custom foreign_key — those still emit via
+// the existing relationships path in future renderer work).
+func emitParentFKs(up *strings.Builder, app *ir.Application) {
+	for _, mod := range app.Modules {
+		for _, ent := range mod.Entities {
+			if len(ent.ParentRefs) == 0 {
+				continue
+			}
+			for _, p := range ent.ParentRefs {
+				fkCol := singular(p.Table) + "_id"
+				if !entityHasField(ent, fkCol) {
+					continue
+				}
+				constraint := ent.Table + "_" + fkCol + "_fkey"
+				fmt.Fprintf(up, "ALTER TABLE %s ADD CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s(%s) ON DELETE CASCADE;\n",
+					ent.Table, constraint, fkCol, p.Table, parentPK(p))
+			}
+		}
+	}
+}
+
+func entityHasField(ent *ir.Entity, name string) bool {
+	for _, f := range ent.Fields {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func parentPK(p *ir.Entity) string {
+	if p.PrimaryKey != nil {
+		return p.PrimaryKey.Name
+	}
+	return "id"
+}
+
+func singular(s string) string {
+	switch {
+	case strings.HasSuffix(s, "ies"):
+		return s[:len(s)-3] + "y"
+	case strings.HasSuffix(s, "ses"), strings.HasSuffix(s, "xes"), strings.HasSuffix(s, "zes"):
+		return s[:len(s)-2]
+	case strings.HasSuffix(s, "s"):
+		return s[:len(s)-1]
+	}
+	return s
 }
 
 func emitRLS(up *strings.Builder, p ir.RLSPolicy, table string) {

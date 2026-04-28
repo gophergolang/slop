@@ -19,8 +19,10 @@ Branch `4-7` is the foundational implementation of the four-pillar architecture 
 |---|---|---|
 | Typed IR + YAML parser | ✅ | `vibeguard ir dump -f fixtures/sample_vibeguard.yaml` |
 | Semantic validator (9 rules) | ✅ | `vibeguard validate -f fixtures/sample_vibeguard.yaml` |
-| Multi-target generator (Go, SQL, K8s, OpenAPI) | ✅ | `vibeguard generate -f fixtures/sample_vibeguard.yaml -o /tmp/app` |
-| Master-prompt static analyzer (4 rules + SARIF) | ✅ | `vibeguard lint ./...` |
+| Multi-target generator (Go, SQL, K8s, OpenAPI, Next.js) | ✅ | `vibeguard generate -f fixtures/sample_vibeguard.yaml -o /tmp/app` |
+| Parent-child entity tree (nested URLs, FK cascades) | ✅ | `parents: [Team]` on an entity; FKs + nested OpenAPI paths emerge automatically |
+| Business-logic nodes (developer-owned Go funcs, framework wraps them) | ✅ | `node: tasks.Prioritize` on a custom_endpoint; stub at `internal/<mod>/nodes/<entity>_<func>.go` |
+| Master-prompt static analyzer (5 rules + SARIF) | ✅ | `vibeguard lint ./...` |
 | Real RLS enforcement in `platform/db/postgres` | ✅ | uses `pgxpool.BeforeAcquire` to bind `app.tenant_id` per checkout |
 | `platform/events/jetstream` durable adapter | ✅ | publish/subscribe via JetStream with explicit ACK |
 | `platform/llm` gateway + Anthropic driver + sealed prompts | ✅ | sha256-sealed prompts, structured-output validation, repair loop |

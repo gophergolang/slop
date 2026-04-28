@@ -20,6 +20,9 @@ import (
 	dbpg "github.com/vibeguard/platform/db/postgres"
 	"github.com/vibeguard/platform/events"
 	evjs "github.com/vibeguard/platform/events/jetstream"
+{{- if anyNodeEndpoints .App }}
+	"github.com/vibeguard/platform/llm"
+{{- end }}
 
 {{- range .App.Modules }}{{- range .Entities }}
 	"{{$.ModulePath}}/internal/{{goPkg .Module.Name}}"
@@ -60,10 +63,20 @@ func main() {
 	router.Use(requestIDMiddleware())
 	router.Use(tenantContextMiddleware())
 
+{{- if anyNodeEndpoints .App }}
+	// llmGateway is wired into node handlers as part of Deps. Apps that don't
+	// declare an llm provider can leave this nil — nodes nil-check d.LLM.
+	var llmGateway llm.Gateway
+{{- end }}
+
 {{- range .App.Modules }}{{- range .Entities }}
 	{{snake .Name}}Repo := {{goPkg .Module.Name}}.New{{goName .Name}}Repository(database)
 	{{snake .Name}}Handler := {{goPkg .Module.Name}}.New{{goName .Name}}Handler({{snake .Name}}Repo, bus)
 	{{goPkg .Module.Name}}.Register{{goName .Name}}Routes(router, {{snake .Name}}Handler)
+{{- if hasNodeEndpoints . }}
+	{{snake .Name}}NodeHandler := {{goPkg .Module.Name}}.New{{goName .Name}}NodeHandler(database, bus, llmGateway, logger)
+	{{goPkg .Module.Name}}.Register{{goName .Name}}NodeRoutes(router, {{snake .Name}}NodeHandler)
+{{- end }}
 {{- end }}{{- end }}
 
 	srv := &http.Server{Addr: ":8080", Handler: router, ReadHeaderTimeout: 5 * time.Second}

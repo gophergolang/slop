@@ -80,6 +80,12 @@ func resolveAll(app *ir.Application) {
 				rel := &ent.Relationships[j]
 				rel.Resolved = byEntityName[rel.To]
 			}
+			ent.ParentRefs = ent.ParentRefs[:0]
+			for _, name := range ent.Parents {
+				if p := byEntityName[name]; p != nil {
+					ent.ParentRefs = append(ent.ParentRefs, p)
+				}
+			}
 		}
 	}
 }
@@ -136,6 +142,7 @@ func decodeEntity(re rawEntity) *ir.Entity {
 			RateLimit:    re.API.RateLimit,
 		},
 		BusinessRules: re.BusinessRules,
+		Parents:       append([]string(nil), re.Parents...),
 	}
 	for _, rf := range re.Fields {
 		f := &ir.Field{
@@ -169,6 +176,8 @@ func decodeEntity(re rawEntity) *ir.Entity {
 			Request:      rce.Request,
 			Response:     rce.Response,
 			AuthRequired: rce.AuthRequired,
+			RolesAllowed: append([]string(nil), rce.RolesAllowed...),
+			Node:         rce.Node,
 			Logic: ir.Logic{
 				Description: rce.Logic.Description,
 				Steps:       decodeSteps(rce.Logic.Steps),

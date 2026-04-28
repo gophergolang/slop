@@ -133,6 +133,12 @@ func (b *Backend) emitEntity(app *ir.Application, mod ir.Module, ent *ir.Entity)
 	} else {
 		return nil, err
 	}
+	// Node-backed custom endpoints (wrapper + nodes/ stubs).
+	if extra, err := b.emitNodes(app, mod, ent, pkg, dir); err == nil {
+		fs = append(fs, extra...)
+	} else {
+		return nil, err
+	}
 	return fs, nil
 }
 
@@ -360,4 +366,52 @@ var funcMap = template.FuncMap{
 	"hasDelete":         func(c ir.CRUD) bool { return c.Delete },
 	"entityImportsTime": entityImportsTime,
 	"entityImportsJSON": entityImportsJSON,
+	"ginVerb":           ginVerb,
+	"hasNodeEndpoints":  hasNodeEndpoints,
+	"anyNodeEndpoints":  anyNodeEndpoints,
+}
+
+// hasNodeEndpoints reports whether ent has any custom_endpoint with a Node ref.
+func hasNodeEndpoints(ent *ir.Entity) bool {
+	for _, ep := range ent.API.CustomEndpoints {
+		if strings.TrimSpace(ep.Node) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// anyNodeEndpoints reports whether the application contains any node-backed
+// custom endpoint at all. Used by main.go to gate the llm gateway import +
+// variable declaration so apps without nodes don't pull in the llm package.
+func anyNodeEndpoints(app *ir.Application) bool {
+	for _, mod := range app.Modules {
+		for _, ent := range mod.Entities {
+			if hasNodeEndpoints(ent) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ginVerb maps an HTTP method to gin's IRouter verb method name.
+func ginVerb(method string) string {
+	switch strings.ToUpper(method) {
+	case "GET":
+		return "GET"
+	case "POST":
+		return "POST"
+	case "PUT":
+		return "PUT"
+	case "PATCH":
+		return "PATCH"
+	case "DELETE":
+		return "DELETE"
+	case "HEAD":
+		return "HEAD"
+	case "OPTIONS":
+		return "OPTIONS"
+	}
+	return "POST"
 }
